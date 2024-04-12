@@ -481,6 +481,7 @@ Datum pg_raptor_get_earliest_trips(PG_FUNCTION_ARGS)
         trip_id_len = strlen(trips[call_cntr].trip_id);
         stop_id_len = strlen(trips[call_cntr].stop_id);
 
+        // TODO remove magic number
         values = (char **)palloc(2 * sizeof(char *));
         values[0] = (char *)palloc(trip_id_len * sizeof(char));
         values[1] = (char *)palloc(stop_id_len * sizeof(char));
