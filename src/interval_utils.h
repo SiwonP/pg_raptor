@@ -4,6 +4,9 @@
 #include "postgres.h"
 #include "fmgr.h"
 
+#include "executor/spi.h"
+#include "utils/builtins.h"
+#include "funcapi.h"
 
 #define raptor_PG_RETURN_INTERVAL(X) PG_RETURN_DATUM((Datum)(X))
 
