@@ -26,7 +26,9 @@ typedef struct Route
 typedef struct Trip
 {
     char        *trip_id;
+    char        *stop_id;
     Interval    *departure_time;
+    int         stop_sequence;
 } Trip_t;
 
 
