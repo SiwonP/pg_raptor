@@ -14,6 +14,8 @@ void fill_queue_node(Queue_node_t *node, char *stop_id, Route_t *route)
 void add_to_queue(Queue_node_t **queue, size_t *size_queue, char *stop_id, Route_t **routes, size_t total_routes)
 {
     size_t i = 0;
+    elog(INFO, "[add_to_queue] size queue %ld", *size_queue);
+    elog(INFO, "[add_to_queue] total routes %ld", total_routes);
 
     (*queue) = (Queue_node_t *) realloc((*queue), (*size_queue + total_routes) * sizeof(Queue_node_t));
 
@@ -23,6 +25,8 @@ void add_to_queue(Queue_node_t **queue, size_t *size_queue, char *stop_id, Route
     }
 
     *size_queue += total_routes;
+    elog(INFO, "[add_to_queue] size queue %ld", *size_queue);
+
 }
 
 void clear_queue(Queue_node_t *queue, size_t size_queue)
@@ -89,4 +93,23 @@ void add_item(Label_t **labels, char *stop_id, Interval *value)
     d->departure_time = value;
     d->next = *labels;
     *labels = d;
+}
+
+char is_labelled(Label_t *labels, char *stop_id)
+{
+    Label_t *next;
+    next = labels;
+    char res = 0;
+    while (next != NULL)
+    {
+        if (strcmp(next->stop_id, stop_id) == 0)
+        {
+            res = 1;
+            break;
+        }
+        next = next->next;
+
+    }
+
+    return res;
 }

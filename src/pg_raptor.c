@@ -47,7 +47,7 @@ Datum raptor_get_time(PG_FUNCTION_ARGS)
     return_interval->month = 0;
 
     char base_query[] = "select departure_time "
-                        "from tan.stop_times st "
+                        "from stop_times st "
                         "where stop_id = '%s' "
                         "and trip_id = '%s'";
 
@@ -69,7 +69,7 @@ Datum raptor_get_time(PG_FUNCTION_ARGS)
 
     fetch_time(&tuple, &tupdesc, &interval);
 
-    elog(WARNING, "time %ld", interval->time); // nanoseconds !!!!!!
+    elog(WARNING, "time %ld", interval->time); // microseconds !!!!!!
     elog(WARNING, "time %d", interval->day);
     elog(WARNING, "time %d", interval->month);
 
@@ -182,14 +182,29 @@ void raptor_process_round(
     size_t *size_queue, Label_t **labels_round, Label_t **labels_star)
 {
     *size_queue = 0;
+
+    elog(INFO, "processing round");
+    elog(INFO, "size marked stops %ld", size_marked_stops);
+
     if (*queue != NULL)
     {
         clear_queue(*queue, *size_queue);
         free(*queue);
         *queue = NULL;
     }
+    elog(INFO, "size queue %ld", size_queue);
 
     raptor_accumulate_routes(marked_stops, size_marked_stops, queue, size_queue);
+
+    elog(INFO, "size queue %ld", *size_queue);
+    elog(INFO, "size marked stops %ld", size_marked_stops);
+
+    for (int i = 0; i < *size_queue; i++)
+    {
+        elog(INFO, "queue %ld %s %s", i, (*queue)[i].route_id, (*queue)[i].stop_id);
+    }
+
+    elog(INFO, "traversing route");
     raptor_traverse_routes(round, *queue, *size_queue, labels_round, labels_star);
 }
 
@@ -201,19 +216,22 @@ raptor_process(Stop_t *marked_stops, size_t size_marked_stops)
     size_t size_queue = 0;
     Label_t *labels_round = NULL, *labels_star = NULL;
 
-    for (round = 0; round < MAX_ROUND; round++)
+    for (round = 1; round < MAX_ROUND || size_marked_stops == 0; round++)
     {
+        elog(INFO, "round number %d", round);
         raptor_process_round(round, marked_stops, size_marked_stops, &queue, &size_queue, &labels_round, &labels_star);
     }
 }
 
-Datum raptor_run(PG_FUNCTION_ARGS)
+PG_FUNCTION_INFO_V1(pg_raptor_run);
+
+Datum pg_raptor_run(PG_FUNCTION_ARGS)
 {
 
     char *from_stop_id = NULL, *target_stop_id = NULL;
     Route_t *routes = NULL;
     // size_t total_routes = 0;
-    size_t size_marked_nodes = 0;
+    size_t size_marked_stops = 0;
     size_t size_queue = 0;
 
     Queue_node_t *queue = NULL;
@@ -237,9 +255,12 @@ Datum raptor_run(PG_FUNCTION_ARGS)
     from_stop.stop_id = from_stop_id;
     target_stop.stop_id = target_stop_id;
 
+    elog(INFO, "from_stop_id %s", from_stop.stop_id);
+    elog(INFO, "to_stop_id %s",target_stop.stop_id );
+
     // marking from_stop
     marked_stops[0] = from_stop;
-    size_marked_nodes = 1;
+    size_marked_stops = 1;
     size_t total_routes;
 
     if (SRF_IS_FIRSTCALL())
@@ -250,8 +271,7 @@ Datum raptor_run(PG_FUNCTION_ARGS)
         oldcontext = MemoryContextSwitchTo(funcctx->multi_call_memory_ctx);
         /* One-time setup code appears here: */
 
-        get_routes_traversing_stop_id(marked_stops->stop_id, &routes, &total_routes);
-        // raptor_process(marked_stops, size_marked_nodes);
+        raptor_process(marked_stops, size_marked_stops);
 
         funcctx->max_calls = size_queue;
         // funcctx->max_calls = total_routes;
@@ -413,6 +433,7 @@ Datum pg_raptor_get_routes_traversing_stop(PG_FUNCTION_ARGS)
     }
 }
 
+
 PG_FUNCTION_INFO_V1(pg_raptor_get_earliest_trips);
 
 Datum pg_raptor_get_earliest_trips(PG_FUNCTION_ARGS)
@@ -454,9 +475,11 @@ Datum pg_raptor_get_earliest_trips(PG_FUNCTION_ARGS)
                      errmsg("function returning record called in context "
                             "that cannot accept type record")));
 
-        attinmeta = TupleDescGetAttInMetadata(tupdesc);
-        funcctx->attinmeta = attinmeta;
+        // attinmeta = TupleDescGetAttInMetadata(tupdesc);
+        tupdesc = BlessTupleDesc(tupdesc);
+        // funcctx->attinmeta = attinmeta;
         // funcctx->user_fctx = routes;
+        funcctx->tuple_desc = tupdesc;
         funcctx->user_fctx = trips;
 
         MemoryContextSwitchTo(oldcontext);
@@ -467,38 +490,42 @@ Datum pg_raptor_get_earliest_trips(PG_FUNCTION_ARGS)
     call_cntr = funcctx->call_cntr;
     max_calls = funcctx->max_calls;
     attinmeta = funcctx->attinmeta;
+    tupdesc = funcctx->tuple_desc;
     trips = (Trip_t *)funcctx->user_fctx;
 
     /* this is just one way we might test whether we are done: */
     if (call_cntr < max_calls)
     {
         /* Here we want to return another item: */
-        char **values;
+        Datum *values;
         HeapTuple tuple;
+        size_t num_values;
         Datum result;
-        size_t trip_id_len, stop_id_len;
+        bool *nulls;
 
-        trip_id_len = strlen(trips[call_cntr].trip_id);
-        stop_id_len = strlen(trips[call_cntr].stop_id);
+        num_values = 4;
+        values = palloc(num_values * sizeof(Datum));
+        nulls = palloc(num_values * sizeof(bool));
 
-        // TODO remove magic number
-        values = (char **)palloc(2 * sizeof(char *));
-        values[0] = (char *)palloc(trip_id_len * sizeof(char));
-        values[1] = (char *)palloc(stop_id_len * sizeof(char));
+        for(int i = 0 ; i < num_values; i++) 
+        {
+            nulls[i] = false;
+        }
 
-        strncpy(values[0], trips[call_cntr].trip_id, trip_id_len);
-        strncpy(values[1], trips[call_cntr].stop_id, stop_id_len);
+        values[0] = CStringGetDatum(trips[call_cntr].trip_id);
+        values[1] = CStringGetDatum(trips[call_cntr].stop_id);
+        values[2] = Int32GetDatum(trips[call_cntr].stop_sequence);
+        values[3] = (Datum) trips[call_cntr].departure_time;
 
         /* build a tuple */
-        tuple = BuildTupleFromCStrings(attinmeta, values);
+        // tuple = BuildTupleFromCStrings(attinmeta, values);
+        tuple = heap_form_tuple(tupdesc, values, nulls);
 
         /* make the tuple into a datum */
         result = HeapTupleGetDatum(tuple);
 
         /* clean up (this is not really necessary) */
-        pfree(values[0]);
-        pfree(values[1]);
-        pfree(values);
+        // pfree(values);
 
         SRF_RETURN_NEXT(funcctx, result);
     }
@@ -510,4 +537,129 @@ Datum pg_raptor_get_earliest_trips(PG_FUNCTION_ARGS)
         // clear_queue(queue, size_queue);
         // free(queue);
     }
+}
+
+PG_FUNCTION_INFO_V1(pg_raptor_accumulate_routes);
+
+Datum pg_raptor_accumulate_routes(PG_FUNCTION_ARGS)
+{
+
+    Stop_t *marked_stops;
+    size_t size_marked_stops;
+    Queue_node_t *queue;
+    size_t size_queue;
+
+    char *stop_id = NULL, *route_id = NULL, *departure_time = NULL, *departure_date = NULL;
+    Trip_t *trips = NULL;
+    size_t total_trips = 0;
+
+    FuncCallContext *funcctx;
+    int call_cntr;
+    int max_calls;
+    TupleDesc tupdesc;
+    AttInMetadata *attinmeta;
+
+    // retrieving the id of from_stop and target_stop
+    stop_id = text_to_cstring(PG_GETARG_TEXT_PP(0));
+    route_id = text_to_cstring(PG_GETARG_TEXT_PP(1));
+    departure_time = text_to_cstring(PG_GETARG_TEXT_PP(2));
+    departure_date = text_to_cstring(PG_GETARG_TEXT_PP(3));
+
+    if (SRF_IS_FIRSTCALL())
+    {
+        MemoryContext oldcontext;
+
+        funcctx = SRF_FIRSTCALL_INIT();
+        oldcontext = MemoryContextSwitchTo(funcctx->multi_call_memory_ctx);
+
+        /* One-time setup code appears here: */
+        raptor_accumulate_routes(marked_stops, size_marked_stops, &queue, &size_queue);
+
+        funcctx->max_calls = size_queue;
+
+        if (get_call_result_type(fcinfo, NULL, &tupdesc) != TYPEFUNC_COMPOSITE)
+            ereport(ERROR,
+                    (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+                     errmsg("function returning record called in context "
+                            "that cannot accept type record")));
+
+        // attinmeta = TupleDescGetAttInMetadata(tupdesc);
+        tupdesc = BlessTupleDesc(tupdesc);
+        // funcctx->attinmeta = attinmeta;
+        // funcctx->user_fctx = routes;
+        funcctx->tuple_desc = tupdesc;
+        funcctx->user_fctx = queue;
+
+        MemoryContextSwitchTo(oldcontext);
+    }
+
+    /* Each-time setup code appears here: */
+    funcctx = SRF_PERCALL_SETUP();
+    call_cntr = funcctx->call_cntr;
+    max_calls = funcctx->max_calls;
+    attinmeta = funcctx->attinmeta;
+    tupdesc = funcctx->tuple_desc;
+    queue = (Queue_node_t *)funcctx->user_fctx;
+
+    /* this is just one way we might test whether we are done: */
+    if (call_cntr < max_calls)
+    {
+        /* Here we want to return another item: */
+        Datum *values;
+        HeapTuple tuple;
+        size_t num_values;
+        Datum result;
+        bool *nulls;
+
+        num_values = 4;
+        values = palloc(num_values * sizeof(Datum));
+        nulls = palloc(num_values * sizeof(bool));
+
+        for(int i = 0 ; i < num_values; i++) 
+        {
+            nulls[i] = false;
+        }
+
+        values[0] = CStringGetDatum(trips[call_cntr].trip_id);
+        values[1] = CStringGetDatum(trips[call_cntr].stop_id);
+        values[2] = Int32GetDatum(trips[call_cntr].stop_sequence);
+        values[3] = (Datum) trips[call_cntr].departure_time;
+
+        elog(WARNING, "cstring : %s", trips[call_cntr].trip_id);
+        elog(WARNING, "datum : %s", values[0]);
+
+        /* build a tuple */
+        // tuple = BuildTupleFromCStrings(attinmeta, values);
+        tuple = heap_form_tuple(tupdesc, values, nulls);
+
+        /* make the tuple into a datum */
+        result = HeapTupleGetDatum(tuple);
+
+        /* clean up (this is not really necessary) */
+        // pfree(values);
+
+        SRF_RETURN_NEXT(funcctx, result);
+    }
+    else
+    {
+        /* Here we are done returning items, so just report that fact. */
+        /* (Resist the temptation to put cleanup code here.) */
+        SRF_RETURN_DONE(funcctx);
+        // clear_queue(queue, size_queue);
+        // free(queue);
+    }
+}
+
+PG_FUNCTION_INFO_V1(pg_raptor_get_interval_from_string);
+
+Datum pg_raptor_get_interval_from_string(PG_FUNCTION_ARGS)
+{
+    char *string;
+    Interval interval;
+
+    string = text_to_cstring(PG_GETARG_TEXT_PP(0));
+
+    get_interval_from_string(string, &interval);
+
+    PG_RETURN_VOID();
 }

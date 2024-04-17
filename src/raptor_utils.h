@@ -32,4 +32,6 @@ void delete_item(Label_t **labels, char *key);
 
 void add_item(Label_t **labels, char *key, Interval *value);
 
+char is_labelled(Label_t *labels, char *stop_id);
+
 #endif

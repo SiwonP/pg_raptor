@@ -210,13 +210,13 @@ void get_from_stops(char *stop_id, Stop_t **stops, size_t *total_from_stops)
 
 void get_routes_traversing_stop_id(char *stop_id, Route_t **routes, size_t *total_routes)
 {
-
+    elog(INFO, "get_routes_traversing_stop_id");
     char query[QUERY_SIZE] = {0};
 
     char base_query[] = "select distinct r.route_id, r.route_short_name "
-                            "from ter.routes r "
-                            "join ter.trips t ON r.route_id = t.route_id "
-                            "join ter.stop_times st on st.trip_id = t.trip_id "
+                            "from routes r "
+                            "join trips t ON r.route_id = t.route_id "
+                            "join stop_times st on st.trip_id = t.trip_id "
                             "where st.stop_id = '%s'";
 
     SPIPlanPtr SPIplan;
@@ -280,6 +280,7 @@ void get_routes_traversing_stop_id(char *stop_id, Route_t **routes, size_t *tota
         }
     }
     *total_routes = total_tuples;
+
     SPI_cursor_close(SPIportal);
     SPI_finish();
 }
@@ -288,21 +289,30 @@ void get_stops_on_route_after_stop_id(char *route_id, char *stop_id, Stop_t **st
 {
     char query[QUERY_SIZE] = {0};
 
-    char base_query[] = "with max_stop_sequence  as ("
-                        "select route_id, direction_id, max_stop_sequence "
-                        "from ter.routes_stops rs "
-                        "where stop_id = '%s' "
-                        "and route_id = '%s' "
-                        ")"
-                        "select rs.stop_id, s.stop_name "
-                        "from ter.routes_stops rs "
-                        "join max_stop_sequence mss "
-                        "on rs.route_id = mss.route_id "
-                        "join ter.stops s "
-                        "on rs.stop_id  = s.stop_id "
-                        "and rs.direction_id = mss.direction_id "
-                        "where rs.max_stop_sequence > mss.max_stop_sequence "
-                        "order by rs.max_stop_sequence";
+    // char base_query[] = "with max_stop_sequence  as ("
+    //                     "select route_id, direction_id, max_stop_sequence "
+    //                     "from ter.routes_stops rs "
+    //                     "where stop_id = '%s' "
+    //                     "and route_id = '%s' "
+    //                     ")"
+    //                     "select rs.stop_id, s.stop_name "
+    //                     "from ter.routes_stops rs "
+    //                     "join max_stop_sequence mss "
+    //                     "on rs.route_id = mss.route_id "
+    //                     "join ter.stops s "
+    //                     "on rs.stop_id  = s.stop_id "
+    //                     "and rs.direction_id = mss.direction_id "
+    //                     "where rs.max_stop_sequence > mss.max_stop_sequence "
+    //                     "order by rs.max_stop_sequence";
+
+    char base_query[] = "select distinct st2.stop_id , st2.stop_sequence "
+                        "from routes r "
+                        "join trips t ON r.route_id = t.route_id "
+                        "join stop_times st on st.trip_id = t.trip_id "
+                        "join stop_times st2 on st2.trip_id = t.trip_id " 
+                        "where r.route_id = '%s' "
+                        "and st.stop_id = '%s' "
+                        "and st2.stop_sequence >= st.stop_sequence";
 
     SPIPlanPtr SPIplan;
     Portal SPIportal;
@@ -350,7 +360,7 @@ void get_stops_on_route_after_stop_id(char *route_id, char *stop_id, Stop_t **st
             for (t = 0; t < ntuples; t++)
             {
                 HeapTuple tuple = tuptable->vals[t];
-                fetch_stop(&tuple, &tupdesc, &(*stops)[total_tuples - ntuples + t], 1);
+                fetch_stop(&tuple, &tupdesc, &(*stops)[total_tuples - ntuples + t], 0);
             }
             SPI_freetuptable(tuptable);
         }
@@ -575,4 +585,38 @@ void get_transfer_from_stop_id(char *stop_id, Stop_t **stops)
     }
 
     SPI_cursor_close(SPIportal);
+}
+
+
+int get_interval_from_string(char *string, Interval *interval)
+{
+    int ret;
+    int res = 0;
+    uint64 proc;
+    char query[128] = {0};
+    char base_query[] = "select '%s'::interval";
+    sprintf(query, base_query, string);
+    
+    SPI_connect();
+
+    elog(INFO, "string interval %s", string);
+
+    ret = SPI_exec(query, 1);
+
+    proc = SPI_processed;
+    
+    if (ret > 0 && SPI_tuptable != NULL)
+    {
+        SPITupleTable *tuptable = SPI_tuptable;
+        TupleDesc tupdesc = tuptable->tupdesc;
+        HeapTuple tuple = tuptable->vals[0];
+        fetch_time(&tuple, &tupdesc, &interval);
+
+        elog(INFO, "interval : %ld", interval->time);
+        elog(INFO, "interval day: %d", interval->day);
+        elog(INFO, "interval month: %d", interval->month);
+        res = 1;
+    }  
+    SPI_finish();
+    return res;
 }

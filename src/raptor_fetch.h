@@ -37,4 +37,6 @@ void get_earliest_trip(char *stop_id, char *route_id, char *departure_time, char
 
 void get_routes_traversing_stop_id(char *stop_id, Route_t **routes, size_t *total_routes);
 
+int get_interval_from_string(char *string, Interval *interval);
+
 #endif
