@@ -12,7 +12,7 @@
 #include "raptor_fetch.h"
 #include "raptor_steps.h"
 
-#define MAX_ROUND 4
+#define MAX_ROUND 2
 
 void init_labels(Label_t **labels, Stop_t *from_stops, size_t total_from_stops);
 
